@@ -2,3 +2,5 @@ hm:
   db:
     host: mysql
     pw: 123
+  nacos:
+    addr: nacos:8848 # 修改为你自己的虚拟机IP地址
