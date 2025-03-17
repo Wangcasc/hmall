@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmall.cart.domain.dto.CartFormDTO;
+import com.hmall.cart.domain.dto.ItemDTO;
 import com.hmall.cart.domain.po.Cart;
 import com.hmall.cart.domain.vo.CartVO;
 import com.hmall.cart.mapper.CartMapper;
@@ -16,14 +17,18 @@ import com.hmall.common.utils.UserContext;
 
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.Collection;
 import java.util.List;
-//import java.util.Map;
-//import java.util.Set;
-//import java.util.function.Function;
-//import java.util.stream.Collectors;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * <p>
@@ -34,10 +39,16 @@ import java.util.List;
  * @since 2023-05-05
  */
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor // 用于注入RestTemplate
 public class CartServiceImpl extends ServiceImpl<CartMapper, Cart> implements ICartService {
 
     //private final IItemService itemService;  微服务拆分，先不做跨数据库处理 TODO
+
+    private final RestTemplate restTemplate;
+    // 构造器形式注入 比 @Autowired 更加推荐 这里改成了lombok的注解
+    //public CartServiceImpl(RestTemplate restTemplate) {
+    //    this.restTemplate = restTemplate;
+    //}
 
     @Override
     public void addItem2Cart(CartFormDTO cartFormDTO) {
@@ -81,25 +92,43 @@ public class CartServiceImpl extends ServiceImpl<CartMapper, Cart> implements IC
     }
 
     private void handleCartItems(List<CartVO> vos) {
-        //// 1.获取商品id TODO 微服务拆分，先不做跨数据库处理
-        //Set<Long> itemIds = vos.stream().map(CartVO::getItemId).collect(Collectors.toSet());
-        //// 2.查询商品
+        // 1.获取商品id
+        Set<Long> itemIds = vos.stream().map(CartVO::getItemId).collect(Collectors.toSet());
+        // 2.查询商品 基于restTemplate调用item-service的远程网络查询
         //List<ItemDTO> items = itemService.queryItemByIds(itemIds);
-        //if (CollUtils.isEmpty(items)) {
-        //    return;
-        //}
-        //// 3.转为 id 到 item的map
-        //Map<Long, ItemDTO> itemMap = items.stream().collect(Collectors.toMap(ItemDTO::getId, Function.identity()));
-        //// 4.写入vo
-        //for (CartVO v : vos) {
-        //    ItemDTO item = itemMap.get(v.getItemId());
-        //    if (item == null) {
-        //        continue;
-        //    }
-        //    v.setNewPrice(item.getPrice());
-        //    v.setStatus(item.getStatus());
-        //    v.setStock(item.getStock());
-        //}
+
+        // 2.1 利用restTemplate发起http请求 得到http响应
+        ResponseEntity<List<ItemDTO>> response = restTemplate.exchange(
+                "http://localhost:8081/items?ids={ids}",
+                HttpMethod.GET,
+                null,
+                new ParameterizedTypeReference<List<ItemDTO>>() {
+                },
+                Map.of("ids", StrUtil.join(",", itemIds))
+        );
+        // 2.2 从响应中获取数据
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            //响应不成功，直接返回
+            return;
+        }
+        List<ItemDTO> items = response.getBody();
+
+
+        if (CollUtils.isEmpty(items)) {
+            return;
+        }
+        // 3.转为 id 到 item的map
+        Map<Long, ItemDTO> itemMap = items.stream().collect(Collectors.toMap(ItemDTO::getId, Function.identity()));
+        // 4.写入vo
+        for (CartVO v : vos) {
+            ItemDTO item = itemMap.get(v.getItemId());
+            if (item == null) {
+                continue;
+            }
+            v.setNewPrice(item.getPrice());
+            v.setStatus(item.getStatus());
+            v.setStock(item.getStock());
+        }
     }
 
     @Override
